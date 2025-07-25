@@ -1,0 +1,145 @@
+<!-- index.html -->
+<!DOCTYPE html>
+<html lang="fa">
+<head>
+  <meta charset="UTF-8">
+  <title>ضریب‌یار | ابزار انفجار</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="manifest" href="manifest.json">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.rtl.min.css" rel="stylesheet">
+</head>
+<body class="bg-dark text-light p-3">
+
+  <div class="container">
+    <h3 class="text-center mb-4">🎮 ضریب‌یار</h3>
+
+    <div class="mb-3">
+      <label for="cashout" class="form-label">ضریب برداشت شما:</label>
+      <input type="number" class="form-control" id="cashout" step="0.01" min="1" value="2.5">
+    </div>
+
+    <div class="d-grid">
+      <button class="btn btn-success" onclick="playRound()">شروع بازی</button>
+    </div>
+
+    <div class="mt-4 p-3 bg-secondary rounded" id="resultBox"></div>
+    <canvas id="profitChart" class="mt-4"></canvas>
+  </div>
+
+  <script>
+    let history = [];
+
+    function generateSeed() {
+      return Math.floor(100000 + Math.random() * 900000).toString();
+    }
+
+    function sha256(seed) {
+      const encoder = new TextEncoder();
+      const data = encoder.encode(seed);
+      return crypto.subtle.digest("SHA-256", data).then(hash => {
+        let hex = '';
+        const view = new DataView(hash);
+        for (let i = 0; i < view.byteLength; i++) {
+          hex += ('00' + view.getUint8(i).toString(16)).slice(-2);
+        }
+        return hex;
+      });
+    }
+
+    async function playRound() {
+      const cashout = parseFloat(document.getElementById("cashout").value);
+      const seed = generateSeed();
+      const hash = await sha256(seed);
+      const numeric = parseInt(hash.substring(0, 8), 16);
+      const crashPoint = Math.max(1.00, Math.round(((numeric % 900) / 100 + 1.00) * 100) / 100);
+      const won = cashout < crashPoint;
+      const profit = won ? cashout : -1.00;
+
+      const roundData = { seed, hash, crashPoint, cashout, won, profit };
+      history.push(roundData);
+      localStorage.setItem("crashHistory", JSON.stringify(history));
+
+      document.getElementById("resultBox").innerHTML = `
+        <strong>Seed:</strong> ${seed}<br>
+        <strong>Hash:</strong> ${hash}<br>
+        <strong>ضریب انفجار:</strong> ${crashPoint}x<br>
+        <strong>برداشت شما:</strong> ${cashout}x<br>
+        <strong>نتیجه:</strong> ${won ? "✅ برد" : "❌ باخت"}<br>
+        <strong>سود/ضرر:</strong> ${profit}<br><br>
+        <strong>هشدار روانشناسی:</strong><br>${analyzeBehavior()}
+      `;
+
+      updateChart();
+    }
+
+    function analyzeBehavior() {
+      const lastRounds = history.slice(-5);
+      let warnings = [];
+
+      const losses = lastRounds.filter(r => !r.won);
+      if (losses.length >= 3) {
+        warnings.push("⚠️ چند باخت متوالی؛ مراقب تعقیب ضرر باشید.");
+      }
+
+      const riskyWins = lastRounds.filter(r => r.won && r.crashPoint - r.cashout < 0.5);
+      if (riskyWins.length >= 2) {
+        warnings.push("⚠️ بردهای نزدیک به انفجار؛ نشانه‌ای از طمع.");
+      }
+
+      if (lastRounds.length >= 4) {
+        const diffs = lastRounds.map((r, i, arr) => i > 0 ? r.cashout - arr[i - 1].cashout : 0);
+        const pattern = diffs.every(d => d !== 0);
+        if (pattern) {
+          warnings.push("⚠️ تغییرات ضریب برداشت شما نشان‌دهنده تلاش برای پیش‌بینی الگوریتم است.");
+        }
+      }
+
+      return warnings.join("<br>");
+    }
+
+    function updateChart() {
+      const labels = history.map((_, i) => `دور ${i + 1}`);
+      const data = history.map(r => r.profit);
+      const ctx = document.getElementById('profitChart').getContext('2d');
+      if (window.profitChart) window.profitChart.destroy();
+
+      window.profitChart = new Chart(ctx, {
+        type: 'line',
+        data: {
+          labels: labels,
+          datasets: [{
+            label: 'سود/ضرر',
+            data: data,
+            borderColor: 'green',
+            backgroundColor: 'rgba(0,255,0,0.1)',
+            tension: 0.3
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          scales: {
+            y: { beginAtZero: true },
+            x: {}
+          }
+        }
+      });
+    }
+
+    window.onload = () => {
+      const saved = localStorage.getItem("crashHistory");
+      if (saved) {
+        history = JSON.parse(saved);
+        updateChart();
+      }
+    };
+
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.register("sw.js")
+        .then(() => console.log("✅ Service Worker registered"))
+        .catch(err => console.error("❌ SW error:", err));
+    }
+  </script>
+</body>
+</html>
